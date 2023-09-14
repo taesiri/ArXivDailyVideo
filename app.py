@@ -9,9 +9,9 @@ import moviepy.editor as mpy
 import numpy as np
 import requests
 import torch
+from pdf2image import convert_from_path
 from PIL import Image, ImageDraw, ImageFont
 from transformers import pipeline
-from PIL import Image, ImageDraw, ImageFont
 
 # checkpoint = "openai/whisper-tiny"
 # checkpoint = "openai/whisper-base"
@@ -45,15 +45,15 @@ max_duration = 600  # seconds
 fps = 60
 video_width = 1920
 video_height = 1080
-margin_left = 120
-margin_right = 120
-margin_top = 120
+margin_left = 1920 // 2 - 25
+margin_right = 50
+margin_top = 100
 line_height = 65
-total_lines = 12
+total_lines = 14
 
 background_image = Image.open("black_image.jpg")
 
-font = ImageFont.truetype("Lato-Regular.ttf", 46)
+font = ImageFont.truetype("Lato-Regular.ttf", 38)
 title_font = ImageFont.truetype("Lato-Bold.ttf", 70)
 id_font = ImageFont.truetype("Lato-Regular.ttf", 30)
 
@@ -181,11 +181,9 @@ TO_LANGUAGE_CODE = {
 
 
 if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-    from transformers import (
-        AutomaticSpeechRecognitionPipeline,
-        WhisperForConditionalGeneration,
-        WhisperProcessor,
-    )
+    from transformers import (AutomaticSpeechRecognitionPipeline,
+                              WhisperForConditionalGeneration,
+                              WhisperProcessor)
 
     model = (
         WhisperForConditionalGeneration.from_pretrained(checkpoint).to("cuda").half()
@@ -211,49 +209,68 @@ last_draws = None
 last_image = None
 
 
-from PIL import Image, ImageDraw, ImageFont
+def download_pdf(paper_id, save_dir="."):
+    base_url = "https://arxiv.org/pdf/"
+    pdf_url = os.path.join(base_url, f"{paper_id}.pdf")
+
+    pdf_path = os.path.join(save_dir, f"{paper_id}.pdf")
+
+    with requests.get(pdf_url, stream=True) as r:
+        r.raise_for_status()
+        with open(pdf_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+    return pdf_path
 
 
-def generate_modified_background(background_image_path, title, paper_id):
+def generate_modified_background(background_image_path, paper_id):
     # Load the original background
     background = Image.open(background_image_path)
+    video_width = background.width
+    video_height = background.height
+    margin_left = 120
+    id_bottom_margin = 30
 
-    # Replace newlines and multiple spaces in the title to ensure it's a single line
-    title = ' '.join(title.split())
+    # Download the PDF of the paper
+    pdf_path = download_pdf(paper_id)
+
+    # Convert the first page of the PDF to an image
+    pdf_images = convert_from_path(pdf_path)
+    pdf_image = pdf_images[0]
+
+    # Resize the PDF image to fit the height of the background
+    pdf_image = pdf_image.resize(
+        (int(pdf_image.width * video_height / pdf_image.height), video_height)
+    )
+
+    # Paste the PDF image onto the left side of the background
+    background.paste(pdf_image, (0, 0))
 
     # Define fonts
-    title_font_size = 70
-    title_font = ImageFont.truetype(
-        "Lato-Bold.ttf", title_font_size
-    )  # Assuming Lato-Bold.ttf is available
     id_font = ImageFont.truetype("Lato-Regular.ttf", 30)
 
     draw = ImageDraw.Draw(background)
 
-    # Adjust font size to fit title within frame width
-    margin_left = 120
-    margin_right = 120
-    video_width = 1920
+    # Calculate the width and height of the paper_id text
+    id_width, id_height = draw.textsize(paper_id, font=id_font)
 
-    title_width = draw.textlength(title, font=title_font)
+    # Define the position and dimensions for the rectangle background of paper_id
+    rect_left = margin_left - 10
+    rect_top = video_height - id_font.getsize(paper_id)[1] - id_bottom_margin
+    rect_right = rect_left + id_width + 20
+    rect_bottom = rect_top + id_height + 10
 
-    while (
-        title_width > video_width - margin_left - margin_right and title_font_size > 10
-    ):
-        title_font_size -= 1
-        title_font = ImageFont.truetype("Lato-Bold.ttf", title_font_size)
-        title_width = draw.textlength(title, font=title_font)
+    # Draw a black rectangle for paper_id background
+    draw.rectangle([rect_left, rect_top, rect_right, rect_bottom], fill=(0, 0, 0))
 
-    # Draw the paper title on top
+    # Draw the Arxiv ID on top of the black rectangle with white color
     draw.text(
-        (margin_left, 10), title, fill=(255, 255, 255), font=title_font
-    )  # 10 is a small top margin for title
-
-    # Draw the Arxiv ID on the bottom left
-    video_height = 1080
-    draw.text(
-        (margin_left, video_height - 60), paper_id, fill=(255, 200, 200), font=id_font
-    )  # 60 is a margin from bottom
+        (margin_left, video_height - id_height - id_bottom_margin),
+        paper_id,
+        fill=(255, 255, 255),
+        font=id_font,
+    )
 
     # Save the modified background (optional)
     modified_background_path = "modified_background.jpg"
@@ -270,7 +287,7 @@ def make_frame(t, modified_background):
 
     space_length = draw.textlength(" ", font)
     x = margin_left
-    y = margin_top + 100  # Add an additional margin from top to account for the title
+    y = margin_top + 20  # Add an additional margin from top to account for the title
 
     # Create a list of drawing commands
     draws = []
@@ -485,11 +502,11 @@ def predict(paper_id, language=None):
     if not title:
         return "Error: Could not fetch the paper title."
 
-    background_image_path = "black_image.jpg" 
+    background_image_path = "black_image.jpg"
 
     # Create a modified background with the title and ID
     modified_background_path = generate_modified_background(
-        background_image_path, title, paper_id
+        background_image_path, paper_id
     )
     modified_background_image = Image.open(modified_background_path)
 
