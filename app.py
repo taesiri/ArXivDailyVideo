@@ -11,6 +11,7 @@ import requests
 import torch
 from PIL import Image, ImageDraw, ImageFont
 from transformers import pipeline
+from PIL import Image, ImageDraw, ImageFont
 
 # checkpoint = "openai/whisper-tiny"
 # checkpoint = "openai/whisper-base"
@@ -53,7 +54,8 @@ total_lines = 12
 background_image = Image.open("black_image.jpg")
 
 font = ImageFont.truetype("Lato-Regular.ttf", 46)
-
+title_font = ImageFont.truetype("Lato-Bold.ttf", 70)
+id_font = ImageFont.truetype("Lato-Regular.ttf", 30)
 
 text_color = (255, 200, 200)
 highlight_color = (255, 255, 255)
@@ -209,15 +211,66 @@ last_draws = None
 last_image = None
 
 
-def make_frame(t):
+from PIL import Image, ImageDraw, ImageFont
+
+
+def generate_modified_background(background_image_path, title, paper_id):
+    # Load the original background
+    background = Image.open(background_image_path)
+
+    # Replace newlines and multiple spaces in the title to ensure it's a single line
+    title = ' '.join(title.split())
+
+    # Define fonts
+    title_font_size = 70
+    title_font = ImageFont.truetype(
+        "Lato-Bold.ttf", title_font_size
+    )  # Assuming Lato-Bold.ttf is available
+    id_font = ImageFont.truetype("Lato-Regular.ttf", 30)
+
+    draw = ImageDraw.Draw(background)
+
+    # Adjust font size to fit title within frame width
+    margin_left = 120
+    margin_right = 120
+    video_width = 1920
+
+    title_width = draw.textlength(title, font=title_font)
+
+    while (
+        title_width > video_width - margin_left - margin_right and title_font_size > 10
+    ):
+        title_font_size -= 1
+        title_font = ImageFont.truetype("Lato-Bold.ttf", title_font_size)
+        title_width = draw.textlength(title, font=title_font)
+
+    # Draw the paper title on top
+    draw.text(
+        (margin_left, 10), title, fill=(255, 255, 255), font=title_font
+    )  # 10 is a small top margin for title
+
+    # Draw the Arxiv ID on the bottom left
+    video_height = 1080
+    draw.text(
+        (margin_left, video_height - 60), paper_id, fill=(255, 200, 200), font=id_font
+    )  # 60 is a margin from bottom
+
+    # Save the modified background (optional)
+    modified_background_path = "modified_background.jpg"
+    background.save(modified_background_path)
+
+    return modified_background_path
+
+
+def make_frame(t, modified_background):
     global chunks, start_chunk, last_draws, last_image, total_lines
 
-    image = background_image.copy()
+    image = modified_background.copy()  # Use the modified background
     draw = ImageDraw.Draw(image)
 
     space_length = draw.textlength(" ", font)
     x = margin_left
-    y = margin_top
+    y = margin_top + 100  # Add an additional margin from top to account for the title
 
     # Create a list of drawing commands
     draws = []
@@ -425,12 +478,20 @@ def redistribute_timestamps(matched_output):
 
 
 def predict(paper_id, language=None):
-    global chunks, start_chunk, last_draws, last_image
+    global chunks, start_chunk, last_draws, last_image, background_image
 
     # Fetch the title from the Arxiv API
     title = get_arxiv_title(paper_id)
     if not title:
         return "Error: Could not fetch the paper title."
+
+    background_image_path = "black_image.jpg" 
+
+    # Create a modified background with the title and ID
+    modified_background_path = generate_modified_background(
+        background_image_path, title, paper_id
+    )
+    modified_background_image = Image.open(modified_background_path)
 
     # Download the abstract and audio
     abstract_path, audio_path = download_data(paper_id)
@@ -438,6 +499,8 @@ def predict(paper_id, language=None):
     # Append the title to the abstract
     with open(abstract_path, "r") as f:
         abstract = f.read()
+
+    title = title.replace("\n", " ")
     gt_text = title + ".\n\n" + abstract
     with open(abstract_path, "w") as f:
         f.write(gt_text)
@@ -473,7 +536,9 @@ def predict(paper_id, language=None):
     chunks = redistribute_timestamps(chunks)
 
     # Create the video
-    clip = mpy.VideoClip(make_frame, duration=duration)
+    clip = mpy.VideoClip(
+        lambda x: make_frame(x, modified_background_image), duration=duration
+    )  # Modified this line to pass the modified background
     audio_clip = mpy.AudioFileClip(audio_path).set_duration(duration)
     clip = clip.set_audio(audio_clip)
     video_path = f"{paper_id}_video.mp4"
