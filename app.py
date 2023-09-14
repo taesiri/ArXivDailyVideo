@@ -45,9 +45,9 @@ max_duration = 600  # seconds
 fps = 60
 video_width = 1920
 video_height = 1080
-margin_left = 1920 // 2 - 25
+margin_left = 1920 // 2 - 40
 margin_right = 50
-margin_top = 100
+margin_top = 90
 line_height = 65
 total_lines = 14
 
@@ -181,9 +181,11 @@ TO_LANGUAGE_CODE = {
 
 
 if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-    from transformers import (AutomaticSpeechRecognitionPipeline,
-                              WhisperForConditionalGeneration,
-                              WhisperProcessor)
+    from transformers import (
+        AutomaticSpeechRecognitionPipeline,
+        WhisperForConditionalGeneration,
+        WhisperProcessor,
+    )
 
     model = (
         WhisperForConditionalGeneration.from_pretrained(checkpoint).to("cuda").half()
@@ -252,22 +254,24 @@ def generate_modified_background(background_image_path, paper_id):
 
     draw = ImageDraw.Draw(background)
 
-    # Calculate the width and height of the paper_id text
-    id_width, id_height = draw.textsize(paper_id, font=id_font)
+    fixed_text = "arxiv.taesiri.xyz"
 
-    # Define the position and dimensions for the rectangle background of paper_id
+    # Calculate the width and height of the fixed text
+    id_width, id_height = draw.textsize(fixed_text, font=id_font)
+
+    # Define the position and dimensions for the rectangle background of fixed text
     rect_left = margin_left - 10
-    rect_top = video_height - id_font.getsize(paper_id)[1] - id_bottom_margin
+    rect_top = video_height - id_font.getsize(fixed_text)[1] - id_bottom_margin
     rect_right = rect_left + id_width + 20
     rect_bottom = rect_top + id_height + 10
 
-    # Draw a black rectangle for paper_id background
+    # Draw a black rectangle for fixed text background
     draw.rectangle([rect_left, rect_top, rect_right, rect_bottom], fill=(0, 0, 0))
 
-    # Draw the Arxiv ID on top of the black rectangle with white color
+    # Draw the fixed text on top of the black rectangle with white color
     draw.text(
         (margin_left, video_height - id_height - id_bottom_margin),
-        paper_id,
+        fixed_text,
         fill=(255, 255, 255),
         font=id_font,
     )
@@ -287,7 +291,7 @@ def make_frame(t, modified_background):
 
     space_length = draw.textlength(" ", font)
     x = margin_left
-    y = margin_top + 20  # Add an additional margin from top to account for the title
+    y = margin_top
 
     # Create a list of drawing commands
     draws = []
