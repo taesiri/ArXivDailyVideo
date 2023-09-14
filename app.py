@@ -1,14 +1,16 @@
 import argparse
-import gradio as gr
-import librosa
-import numpy as np
-import moviepy.editor as mpy
-import torch
-from difflib import SequenceMatcher
+import os
+import re
 import string
+from difflib import SequenceMatcher
+
+import librosa
+import moviepy.editor as mpy
+import numpy as np
+import requests
+import torch
 from PIL import Image, ImageDraw, ImageFont
 from transformers import pipeline
-import re
 
 # checkpoint = "openai/whisper-tiny"
 # checkpoint = "openai/whisper-base"
@@ -419,8 +421,23 @@ def redistribute_timestamps(matched_output):
     return modified_output
 
 
-def predict(audio_path, txt_path, language=None):
+def predict(paper_id, language=None):
     global chunks, start_chunk, last_draws, last_image
+
+    # Fetch the title from the Arxiv API
+    title = get_arxiv_title(paper_id)
+    if not title:
+        return "Error: Could not fetch the paper title."
+
+    # Download the abstract and audio
+    abstract_path, audio_path = download_data(paper_id)
+
+    # Append the title to the abstract
+    with open(abstract_path, "r") as f:
+        abstract = f.read()
+    gt_text = title + ". " + abstract
+    with open(abstract_path, "w") as f:
+        f.write(gt_text)
 
     start_chunk = 0
     last_draws = None
@@ -436,7 +453,7 @@ def predict(audio_path, txt_path, language=None):
             language=language, task="transcribe"
         )
 
-    # Run Whisper to get word-level timestamps.
+    # Run Whisper to get word-level timestamps
     audio_inputs = librosa.resample(
         audio_data, orig_sr=sr, target_sr=pipe.feature_extractor.sampling_rate
     )
@@ -449,37 +466,76 @@ def predict(audio_path, txt_path, language=None):
     chunks = output["chunks"]
 
     # Match Whisper output with ground truth
-    with open(txt_path, "r") as f:
-        ground_truth_text = f.read()
-    chunks = robust_match_whisper_with_gt_v9(chunks, ground_truth_text)
+    chunks = robust_match_whisper_with_gt_v9(chunks, gt_text)
     chunks = redistribute_timestamps(chunks)
 
-    # Create the video.
+    # Create the video
     clip = mpy.VideoClip(make_frame, duration=duration)
     audio_clip = mpy.AudioFileClip(audio_path).set_duration(duration)
     clip = clip.set_audio(audio_clip)
-    clip.write_videofile("my_video.mp4", fps=fps, codec="libx264", audio_codec="aac")
-    return "my_video.mp4"
+    video_path = f"{paper_id}_video.mp4"
+    clip.write_videofile(video_path, fps=fps, codec="libx264", audio_codec="aac")
+
+    # Clean up the downloaded abstract and audio files
+    os.remove(abstract_path)
+    os.remove(audio_path)
+
+    return video_path
+
+
+def get_arxiv_title(paper_id):
+    base_url = "http://export.arxiv.org/api/query?id_list="
+    response = requests.get(base_url + paper_id)
+    if response.status_code == 200:
+        start = response.text.find("<title>") + 7
+        end = response.text.find("</title>", start)
+        title = response.text[start:end]
+        return title
+    else:
+        print(f"Failed to get title for paper ID: {paper_id}")
+        return None
+
+
+def download_data(paper_id, save_dir="."):
+    base_url = "https://huggingface.co/datasets/taesiri/arxiv_audio/"
+    abstract_url = os.path.join(base_url, "raw/main/abstract", f"{paper_id}.txt")
+    audio_url = os.path.join(base_url, "resolve/main/audio", f"{paper_id}.mp3")
+
+    abstract_path = os.path.join(save_dir, f"{paper_id}_abstract.txt")
+    audio_path = os.path.join(save_dir, f"{paper_id}.mp3")
+
+    with requests.get(abstract_url, stream=True) as r:
+        r.raise_for_status()
+        with open(abstract_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+    with requests.get(audio_url, stream=True) as r:
+        r.raise_for_status()
+        with open(audio_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+    return abstract_path, audio_path
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Generate a video with subtitled audio using Whisper."
     )
-    parser.add_argument("audio_path", type=str, help="Path to the audio file.")
+    parser.add_argument("--pid", type=str, help="Arxiv paper ID.")
     parser.add_argument(
-        "txt_path", type=str, help="Path to the ground truth text file."
-    )
-    parser.add_argument(
-        "language",
+        "--language",
         type=str,
+        default=None,  # set default to None
         choices=sorted(list(TO_LANGUAGE_CODE.keys())),
-        help="Language of the audio content.",
+        help="Language of the audio content. Optional.",
     )
     args = parser.parse_args()
 
-    output_path = predict(args.audio_path, args.txt_path, args.language)
+    output_path = predict(args.pid, args.language)
     print(f"Generated video saved at: {output_path}")
+
 
 
 if __name__ == "__main__":
