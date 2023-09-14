@@ -51,7 +51,10 @@ line_height = 65
 total_lines = 12
 
 background_image = Image.open("black_image.jpg")
+
 font = ImageFont.truetype("Lato-Regular.ttf", 46)
+
+
 text_color = (255, 200, 200)
 highlight_color = (255, 255, 255)
 
@@ -435,7 +438,7 @@ def predict(paper_id, language=None):
     # Append the title to the abstract
     with open(abstract_path, "r") as f:
         abstract = f.read()
-    gt_text = title + ". " + abstract
+    gt_text = title + ".\n\n" + abstract
     with open(abstract_path, "w") as f:
         f.write(gt_text)
 
@@ -535,7 +538,6 @@ def main():
 
     output_path = predict(args.pid, args.language)
     print(f"Generated video saved at: {output_path}")
-
 
 
 if __name__ == "__main__":
